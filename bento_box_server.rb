@@ -88,6 +88,7 @@ module Bento
       @server = WEBrick::HTTPServer.new(Port: port, DocumentRoot: root)
       @server.mount("/boxes", BoxesServlet, BoxDatabase.new(root, prefix))
       trap("INT") { @server.shutdown }
+      trap("TERM") { @server.shutdown }
     end
 
     def start
