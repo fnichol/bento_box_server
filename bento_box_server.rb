@@ -8,13 +8,14 @@ $stderr.sync = true
 
 require "json"
 require "rubygems/version"
+require "pathname"
 require "webrick"
 
 module Bento
   class BoxDatabase
-    def initialize(root, prefix)
+    def initialize(root, default_prefix)
       @root = root
-      @prefix = prefix
+      @default_prefix = default_prefix
     end
 
     def boxes
@@ -31,28 +32,39 @@ module Bento
 
     private
 
-    attr_reader :root, :prefix
+    attr_reader :root, :default_prefix
 
     def last_metadata_mtime
       metadatas.map { |metadata| File.mtime(metadata) }.max || Time.now
     end
 
+    def full_name_for(name, file)
+      prefix = Pathname(file).relative_path_from(Pathname(root)).dirname.to_s
+      prefix = default_prefix if prefix == "."
+
+      [prefix, name].join("/")
+    end
+
+    def last_db_load_time
+      @last_db_load_time
+    end
+
     def metadatas
-      Dir.glob(File.join(root, "*.metadata.json")).sort
+      Dir.glob(File.join(root, "/**/*.metadata.json")).sort
     end
 
     def populate_db
       $stdout.puts "==> Loading or refreshing box metadata db"
       raw = metadatas.
-        map { |file| JSON.load(IO.read(file)) }.
-        map { |h|
+        map { |file| [file, JSON.load(IO.read(file))] }.
+        map { |file, h|
           {
-            "name" => [prefix, h["name"]].join("/"),
+            "name" => full_name_for(h["name"], file),
             "description" => h.fetch("description", "N/A"),
             "versions" => [
               {
                 "version" => h["version"],
-                "providers" => h["providers"]
+                "providers" => provider_data_for(h["providers"], file)
               }
             ]
           }
@@ -78,8 +90,12 @@ module Bento
       raw
     end
 
-    def last_db_load_time
-      @last_db_load_time
+    def provider_data_for(data, file)
+      prefix = Pathname(file).relative_path_from(Pathname(root)).dirname.to_s
+      data.map do |p|
+        p["file"] = File.join(prefix, p["file"]) unless prefix == "."
+        p
+      end
     end
   end
 
@@ -165,7 +181,7 @@ if $0 == __FILE__
   root = ARGV[0]
   abort "usage: #{$0} <ROOT_PATH>" unless root
   abort "ROOT_PATH: #{root} must exist!" unless File.directory?(root)
-  prefix = ENV.fetch("PREFIX", "bento")
+  prefix = ENV.fetch("PREFIX", "local")
   port = ENV.fetch("PORT", 8000).to_i
 
   Bento::BoxServer.new(root, port, prefix).start
